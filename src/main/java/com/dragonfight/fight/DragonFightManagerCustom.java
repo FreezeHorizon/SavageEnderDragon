@@ -38,6 +38,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+
 import java.util.*;
 
 import static net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE;
@@ -55,15 +56,19 @@ public class DragonFightManagerCustom
      * Lazer attack
     */
 
-    private static boolean isSpiralAttackActive = false;
-    private static int spiralAttackTick = 0;
-    private static final int SPIRAL_ATTACK_DURATION = 400; // Ticks (20 seconds) 
-    private static final double SPIRAL_EXPANSION_RATE = 0.5; // Blocks per tick outward expansion
-    private static final double SPIRAL_ROTATION_SPEED = 10.0; // Degrees per tick rotation
-    private static final int SPIRAL_PARTICLE_DENSITY = 3; // Higher = more particles per step
-    private static final float SPIRAL_DAMAGE_PER_HIT = 40.0f; // Damage applied to entities hit
-    private static final double SPIRAL_DAMAGE_RADIUS = 2.0; // How close entities need to be to the particle point
-    private static int max_LASER_RADIUS = 100;
+    private static boolean isLaserAttacking = false;
+    private static int laserAttackTick = 0;
+    private static Vec3 laserTargetPos = null; // Where the beam is aimed
+    private static Vec3 laserOriginPos = null; // Where the beam starts from (dragon mouth)
+    private static final int LASER_CHARGE_TICKS = 60; // 3 seconds charge up
+    private static final int LASER_FIRE_DURATION = 100; // 5 seconds firing
+    private static final int LASER_COOLDOWN_TICKS = 600; // 30 seconds cooldown between attempts
+    private static int laserCooldown = 0; // Ticks until next laser can be attempted
+    private static final float LASER_DAMAGE_PER_TICK = 2.0f; // Damage per tick to players hit
+    private static final double LASER_DAMAGE_RADIUS = 1.5; // Hitbox radius around beam path
+    private static final double LASER_MAX_DISTANCE = 120.0; // Max range of the beam
+    private static final double LASER_PARTICLE_STEP = 0.5; // How far beam travels between particle spawns
+    private static final double LASER_ATTACK_ALTITUDE = 120.0;
 
     private static final float    CRYSTAL_RESPAWN_TIME    = 8000;
     private static final int      LIGHTNING_DESTROY_RANGE = 10 * 10;
@@ -281,6 +286,9 @@ public class DragonFightManagerCustom
             if (isFightRunning)
             {
                 reset();
+                if (laserCooldown > 0) {
+                    laserCooldown--;
+                }
             }
             isFightRunning = false;
         }
@@ -290,51 +298,106 @@ public class DragonFightManagerCustom
             return;
         }
 
-        if (isSpiralAttackActive) {
-            spiralAttackTick++;
+        if (isLaserAttacking) {
+            ServerLevel serverLevel = (ServerLevel) world;
+            laserAttackTick++;
 
-            // Calculate current spiral parameters
-            double currentRadius = spiralAttackTick * SPIRAL_EXPANSION_RATE;
-            double currentAngleRad = Math.toRadians(spiralAttackTick * SPIRAL_ROTATION_SPEED);
+            // --- Stage 1: Force Dragon Upwards (during "charge" ticks) ---
+            if (laserAttackTick < 0) { // Still in charge/fly-up phase
+                // Teleport dragon upwards towards target altitude
+                double targetY = LASER_ATTACK_ALTITUDE;
+                double currentY = dragonEntity.getY();
+                double climbRate = 1.0; // How fast it climbs (blocks per tick)
+                double newY = Math.min(targetY, currentY + climbRate); // Move up, but don't overshoot
 
-            // Calculate position on the spiral relative to center (spawnPos)
-            double xOffset = currentRadius * Math.cos(currentAngleRad);
-            double zOffset = currentRadius * Math.sin(currentAngleRad);
-            double absoluteX = spawnPos.getX() + xOffset;
-            double absoluteZ = spawnPos.getZ() + zOffset;
-            // Use a fixed Y for simplicity, or get ground height
-            int blockX = (int) Math.floor(absoluteX); // Get block coordinates
-            int blockZ = (int) Math.floor(absoluteZ);
-            int surfaceY = world.getHeight(Heightmap.Types.WORLD_SURFACE, blockX, blockZ);
-            if (surfaceY < world.getMinBuildHeight() + 5 || surfaceY < 50) {
-                DragonfightMod.LOGGER.debug("Spiral attack point ({}, {}) is too low (Y={}), skipping effect.", blockX, blockZ, surfaceY);
-            } else {
-                double yPos = surfaceY + 0.2; // Place slightly above the ground block
-                Vec3 currentSpiralPosVec = new Vec3(absoluteX, yPos, absoluteZ);
-                BlockPos currentSpiralPosBlock = new BlockPos(blockX, surfaceY, blockZ); // BlockPos at the surface level
-                if (world instanceof ServerLevel serverLevel) {
-                    for (int i = 0; i < SPIRAL_PARTICLE_DENSITY; i++) {
-                        // Add some randomness to particle position for a thicker beam effect
-                        double px = currentSpiralPosVec.x + (world.random.nextDouble() - 0.5) * 1.5;
-                        double py = currentSpiralPosVec.y + (world.random.nextDouble() - 0.5) * 1.0;
-                        double pz = currentSpiralPosVec.z + (world.random.nextDouble() - 0.5) * 1.5;
-                        // Use firework particles as requested
-                        serverLevel.sendParticles(ParticleTypes.FIREWORK, px, py, pz, 1, 0, 0, 0, 0);
-                        // Maybe add another type for variety?
+                // Keep X/Z roughly centered or let it drift slightly
+                double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 10; // Slight drift
+                double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 10;
+
+                dragonEntity.teleportTo(targetX, newY, targetZ);
+                // Try to keep it hovering
+                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+
+                // --- Continuous Lightning Signal ---
+                // Spawn lightning frequently near the center portal while charging/climbing
+                if (world.getGameTime() % 5 == 0) { // Every 1/4 second
+                    BlockPos lightningCenter = spawnPos.below(spawnPos.getY() - 64); // Target bedrock level
+                    LightningBolt signalLightning = EntityType.LIGHTNING_BOLT.create(world);
+                    if (signalLightning != null) {
+                        signalLightning.moveTo(lightningCenter.getX() + world.random.nextInt(5)-2,
+                                               lightningCenter.getY(),
+                                               lightningCenter.getZ() + world.random.nextInt(5)-2);
+                        signalLightning.setVisualOnly(true); // Visual only for signal
+                        world.addFreshEntity(signalLightning);
                     }
                 }
-                AABB damageArea = new AABB(currentSpiralPosBlock).inflate(SPIRAL_DAMAGE_RADIUS);
-                List<LivingEntity> entitiesToDamage = world.getEntitiesOfClass(LivingEntity.class, damageArea,player -> player.isAlive());
-                for (LivingEntity target : entitiesToDamage) {
-                     target.hurt(world.damageSources().magic(), SPIRAL_DAMAGE_PER_HIT);
-                     target.addEffect(new MobEffectInstance(MobEffects.GLOWING, 60, 0));
-                     target.addEffect(new MobEffectInstance(MobEffects.HARM, 40 , 10));
+
+                // Set laser origin once dragon is near target altitude (end of charge)
+                if (laserAttackTick == -1) { // Last tick of charge
+                     laserOriginPos = dragonEntity.getEyePosition().add(dragonEntity.getViewVector(1.0f).scale(3.0));
+                     DragonfightMod.LOGGER.info("Laser charging complete, starting fire sequence.");
+                }
+
+            }
+            // --- Stage 2: Firing Phase (laserAttackTick >= 0) ---
+            else if (laserAttackTick >= 0 && laserAttackTick < LASER_FIRE_DURATION) {
+                // Keep forcing position high? Optional, might look jerky.
+                // dragonEntity.teleportTo(dragonEntity.getX(), LASER_ATTACK_ALTITUDE, dragonEntity.getZ());
+                // dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+
+                // --- Continuous Lightning Signal (During Firing) ---
+                 if (world.getGameTime() % 5 == 0) {
+                     BlockPos lightningCenter = spawnPos.below(spawnPos.getY() - 64);
+                     LightningBolt signalLightning = EntityType.LIGHTNING_BOLT.create(world);
+                     if (signalLightning != null) {
+                         signalLightning.moveTo(lightningCenter.getX() + world.random.nextInt(5)-2,
+                                                lightningCenter.getY(),
+                                                lightningCenter.getZ() + world.random.nextInt(5)-2);
+                         signalLightning.setVisualOnly(true);
+                         world.addFreshEntity(signalLightning);
+                     }
+                 }
+
+                // --- Laser Beam Particles and Damage ---
+                if (laserOriginPos != null && laserTargetPos != null) {
+                    Vec3 direction = laserTargetPos.subtract(laserOriginPos).normalize();
+                    for (double step = 0; step < LASER_MAX_DISTANCE; step += LASER_PARTICLE_STEP) {
+                        Vec3 currentPoint = laserOriginPos.add(direction.scale(step));
+
+                        // Spawn Particles (Using currentPoint coordinates)
+                        serverLevel.sendParticles(ParticleTypes.FIREWORK, currentPoint.x, currentPoint.y, currentPoint.z, 1, 0, 0, 0, 0);
+                        serverLevel.sendParticles(ParticleTypes.END_ROD, currentPoint.x, currentPoint.y, currentPoint.z, 1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, 0.05);
+
+                        // Damage Players (Define AABB correctly)
+                        AABB damageArea = new AABB(currentPoint.x - LASER_DAMAGE_RADIUS, currentPoint.y - LASER_DAMAGE_RADIUS, currentPoint.z - LASER_DAMAGE_RADIUS,
+                                                   currentPoint.x + LASER_DAMAGE_RADIUS, currentPoint.y + LASER_DAMAGE_RADIUS, currentPoint.z + LASER_DAMAGE_RADIUS);
+                        // Get only PLAYERS within the damage area (Correct filter)
+                        List<Player> playersHit = world.getEntitiesOfClass(Player.class, damageArea,
+                            // Filter: Only hit players who are alive and not in creative/spectator mode
+                            player -> player.isAlive() && !player.isCreative() && !player.isSpectator()
+                        );
+                        // Loop through the filtered players
+                        for (Player target : playersHit) {
+                             target.hurt(world.damageSources().indirectMagic(dragonEntity, dragonEntity), LASER_DAMAGE_PER_TICK);
+                        }
+                    }
                 }
             }
-            if (spiralAttackTick >= SPIRAL_ATTACK_DURATION || currentRadius > max_LASER_RADIUS) { // Stop after duration or reaching 100 blocks
-                isSpiralAttackActive = false;
-                DragonfightMod.LOGGER.info("Spiral attack sequence finished.");
+            // --- Stage 3: Finish Attack ---
+            else if (laserAttackTick >= LASER_FIRE_DURATION) {
+                isLaserAttacking = false;
+                laserCooldown = LASER_COOLDOWN_TICKS; // Start cooldown
+                DragonfightMod.LOGGER.info("Forced laser sequence finished.");
+                // Allow dragon to resume normal behavior (e.g., take off properly)
+                // It should already be in HOLDING_PATTERN, setting TAKEOFF might be good
+                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
             }
+        }
+        // --- End Forced Laser Sequence ---
+
+        // --- Handle Laser Cooldown (Keep this separate) ---
+        if (!isLaserAttacking && laserCooldown > 0) { // Only tick down if not attacking
+            laserCooldown--;
         }
 
         // Fix dragon flying forever on death
@@ -484,6 +547,12 @@ public class DragonFightManagerCustom
         crystalRespawnPos = null;
         spawnAdds = false;
         spawnCounter = 0;
+
+        isLaserAttacking = false;
+        laserAttackTick = 0;
+        laserTargetPos = null;
+        laserOriginPos = null;
+        laserCooldown = 0;
 
         if (DragonfightMod.server == null)
         {
@@ -713,16 +782,6 @@ public class DragonFightManagerCustom
             // Start spawning endermen
             spawnAdds = true;
 
-            if (!isSpiralAttackActive) { // Prevent starting if already active
-                isSpiralAttackActive = true;
-                spiralAttackTick = 0; // Reset timer
-                DragonfightMod.LOGGER.info("Dragon landed - Starting spiral attack sequence!");
-                notifyPlayer(dragon.level(), "Dragon Lazer attack");
-                for (final Player player : ((IDragonfightAccessor) manager).getDragonEvent().getPlayers()){
-                    player.sendSystemMessage(Component.literal("The dragon charges energy!").withStyle(ChatFormatting.LIGHT_PURPLE));
-                }
-            }
-
             checkCrystalsToRespawn(dragon.level());
             if ((dragon.getHealth() / dragon.getMaxHealth()) < 0.50d && dragon.getDragonFight() != null)
             {   // trigger when 50% hp
@@ -749,20 +808,37 @@ public class DragonFightManagerCustom
             // Stop spawning
             timeSinceLastLanding = 0;
             spawnAdds = false;
+            if (isLaserAttacking) {
+                isLaserAttacking = false;
+                DragonfightMod.LOGGER.info("Forced laser sequence interrupted by landing/death.");
+            }
         }
         if (oldphase == EnderDragonPhase.LANDING && newPhase == EnderDragonPhase.SITTING_SCANNING)
         {
             timeSinceLastLanding = 0;
+            if (!isLaserAttacking && laserCooldown <= 0) { // Only start if not already attacking or cooling down
+                isLaserAttacking = true; // Use this flag to signify the whole sequence
+                laserAttackTick = -LASER_CHARGE_TICKS; // Start with charging phase
+                // Target position for laser beam remains the center base
+                laserTargetPos = new Vec3(spawnPos.getX(), 60, spawnPos.getZ());
+                laserOriginPos = null; // Origin will be set once dragon reaches altitude
 
-            final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
-            if (healthpercent < 0.8d)
-            {
-                advancingLightningCurrent = 6;
-                advancingLightningStop = 50;
-            }
-            else
-            {
-                spawnLightningAtCircle(spawnPos, DragonfightMod.rand.nextInt(16) + 8, dragon.level());
+                DragonfightMod.LOGGER.info("Dragon landed - Initiating forced laser sequence.");
+                notifyPlayer(dragon.level(), "The dragon prepares a powerful attack!");
+
+                // Force the dragon to take off immediately
+                dragon.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
+            } else{
+                final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
+                if (healthpercent < 0.8d)
+                {
+                    advancingLightningCurrent = 6;
+                    advancingLightningStop = 50;
+                }
+                else
+                {
+                    spawnLightningAtCircle(spawnPos, DragonfightMod.rand.nextInt(16) + 8, dragon.level());
+                }
             }
         }
     }
