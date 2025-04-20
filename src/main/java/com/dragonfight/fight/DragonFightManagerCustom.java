@@ -35,7 +35,7 @@ import net.minecraft.world.entity.npc.Npc;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.end.EndDragonFight;
-import net.minecraft.world.level.levelgen.Heightmap;
+//import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -61,18 +61,21 @@ public class DragonFightManagerCustom
     private static int laserAttackTick = 0;
     private static Vec3 laserTargetPos = null; // Where the beam is aimed
     private static Vec3 laserOriginPos = null; // Where the beam starts from (dragon mouth)
-    private static final int LASER_CHARGE_TICKS = 60; // 3 seconds charge up
-    private static final int LASER_FIRE_DURATION = 100; // 5 seconds firing
+    private static final int LASER_CHARGE_TICKS = 100; // 3 seconds charge up
+    private static final int LASER_FIRE_DURATION = 600; // 5 seconds firing
     private static final int LASER_COOLDOWN_TICKS = 600; // 30 seconds cooldown between attempts
-    private static int laserCooldown = 0; // Ticks until next laser can be attempted
-    private static final float LASER_DAMAGE_PER_TICK = 2.0f; // Damage per tick to players hit
-    private static final double LASER_DAMAGE_RADIUS = 1.5; // Hitbox radius around beam path
+    private static int laserCooldown = 200; // Ticks until next laser can be attempted
+    private static final float LASER_DAMAGE_PER_TICK = 5.0f; // Damage per tick to players hit
+    private static final double LASER_DAMAGE_RADIUS = 5; // Hitbox radius around beam path
     private static final double LASER_MAX_DISTANCE = 120.0; // Max range of the beam
-    private static final double LASER_PARTICLE_STEP = 0.5; // How far beam travels between particle spawns
+    private static final double LASER_PARTICLE_STEP = 1; // How far beam travels between particle spawns
     private static final double LASER_ATTACK_ALTITUDE = 120.0;
+    private static boolean preparingLaserSequence = false;
+    private static boolean isPreparingLaser = false; // New flag
+
 
     private static final float    CRYSTAL_RESPAWN_TIME    = 8000;
-    private static final int      LIGHTNING_DESTROY_RANGE = 10 * 10;
+    //private static final int      LIGHTNING_DESTROY_RANGE = 10 * 10;
     private static final float    ADD_TIMER               = 2000;
     private static       BlockPos crystalRespawnPos       = null;
     private static       int      crystalRespawnTimer     = 0;
@@ -135,9 +138,9 @@ public class DragonFightManagerCustom
         {
             return;
         }
-        if (damageSource.getEntity().blockPosition().distSqr(enderCrystalEntity.blockPosition()) > LIGHTNING_DESTROY_RANGE)
-            {
-            // On ranged crystal kill
+        if (damageSource.getEntity() instanceof Player || damageSource.getEntity() instanceof LightningBolt)
+        {
+            DragonfightMod.LOGGER.info("Crystal kill detected!");
             if (!spawnOnCrystalDeath.isEmpty())
             {
                 BlockPos destroyedCrystalPos = enderCrystalEntity.blockPosition();
@@ -148,13 +151,15 @@ public class DragonFightManagerCustom
                 Vec3 groundVec = createVec3(groundSpawnPos);
                 Vec3 pillarTopVec = createVec3(pillarTopPos);
 
-                DragonfightMod.LOGGER.info("{} Crystal destroyed at range. Processing configured spawns...", destroyedCrystalPos);
+                DragonfightMod.LOGGER.info("Processing crystal death spawns. Ground Target: {}, Pillar Target: {}", groundSpawnPos, pillarTopPos); // Log locations
 
                 for (ConfigurationCache.ConfiguredSpawnData configuredSpawnData : spawnOnCrystalDeath) {
                     EntitySpawnData spawnData = configuredSpawnData.entityData();
                     String locationPref = configuredSpawnData.locationPreference();
                     ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(spawnData.type);
-    
+                    DragonfightMod.LOGGER.info("Attempting to spawn {} with location pref '{}'", typeId, locationPref); // Log each attempt
+
+                    
                     // Determine BASE spawn location based on config preference
                     Vec3 baseSpawnVec;
                     if (locationPref.equals("pillar_top")) {
@@ -164,16 +169,16 @@ public class DragonFightManagerCustom
                         baseSpawnVec = groundVec;
                         DragonfightMod.LOGGER.debug("Base location Ground Level near {} for {}.", groundSpawnPos, typeId);
                     }
-    
+                    DragonfightMod.LOGGER.debug("Spawning {} at {}", typeId, baseSpawnVec);
                     
                     double spreadRadius = 5.0; // Increased spread radius
                     Vec3 finalSpawnVec = baseSpawnVec; // Start with base
                     boolean positionFound = false;
-                    for (int attempt = 0; attempt < 5; attempt++) { // Try up to 5 times to find a clear offset spot
+                    for (int attempt = 0; attempt < 10; attempt++) { // Try up to 10 times to find a clear offset spot
                         // Use enderCrystalEntity.level() here:
-                        double offsetX = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                        double offsetZ = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                        Vec3 potentialVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
+                        double offsetX = (enderCrystalEntity.level().random.nextDouble() - 1) * spreadRadius * 2.0;
+                        double offsetZ = (enderCrystalEntity.level().random.nextDouble() - 1) * spreadRadius * 2.0;
+                        Vec3 potentialVec = baseSpawnVec.add(offsetX, -1, offsetZ);
                         BlockPos potentialBlockPos = BlockPos.containing(potentialVec);
 
                         // Check if the potential spot and the space above are air
@@ -185,15 +190,13 @@ public class DragonFightManagerCustom
                         }
                     }
                     if (!positionFound) {
-                         // If still no spot found after attempts, fallback to base + 0.1Y
-                         finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                         // If still no spot found after attempts, fallback to base + 1Y
+                         finalSpawnVec = groundVec.add(spawn_offset, -1, spawn_offset);
                          DragonfightMod.LOGGER.debug("Could not find clear offset spawn for {}, using base.", typeId);
                     } else {
                          DragonfightMod.LOGGER.debug("Using offset spawn for {} at {}", typeId, finalSpawnVec);
                     }
-    
                 }
-                
             }
         }
     }
@@ -301,104 +304,90 @@ public class DragonFightManagerCustom
             return;
         }
 
-        if (isLaserAttacking) {
+        // --- Handle Forced Laser Sequence ---
+        if (isPreparingLaser || isLaserAttacking) { // Check both flags
             ServerLevel serverLevel = (ServerLevel) world;
-            laserAttackTick++;
 
-            // --- Stage 1: Force Dragon Upwards (during "charge" ticks) ---
-            if (laserAttackTick < 0) { // Still in charge/fly-up phase
-                // Teleport dragon upwards towards target altitude
+            // --- Stage 0: Check if Dragon Reached Altitude (if preparing) ---
+            if (isPreparingLaser) {
+                // Force upwards movement (can refine this)
                 double targetY = LASER_ATTACK_ALTITUDE;
                 double currentY = dragonEntity.getY();
-                double climbRate = 1.0; // How fast it climbs (blocks per tick)
-                double newY = Math.min(targetY, currentY + climbRate); // Move up, but don't overshoot
-
-                // Keep X/Z roughly centered or let it drift slightly
-                double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 10; // Slight drift
-                double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 10;
-
-                dragonEntity.teleportTo(targetX, newY, targetZ);
-                // Try to keep it hovering
-                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
-
-                // --- Continuous Lightning Signal ---
-                // Spawn lightning frequently near the center portal while charging/climbing
-                if (world.getGameTime() % 5 == 0) { // Every 1/4 second
-                    BlockPos lightningCenter = spawnPos.below(spawnPos.getY() - 64); // Target bedrock level
-                    LightningBolt signalLightning = EntityType.LIGHTNING_BOLT.create(world);
-                    if (signalLightning != null) {
-                        signalLightning.moveTo(lightningCenter.getX() + world.random.nextInt(5)-2,
-                                               lightningCenter.getY(),
-                                               lightningCenter.getZ() + world.random.nextInt(5)-2);
-                        signalLightning.setVisualOnly(true); // Visual only for signal
-                        world.addFreshEntity(signalLightning);
-                    }
+                if (currentY < targetY - 1.0) { // Keep climbing if not near target Y
+                    double climbRate = 1.5;
+                    double newY = Math.min(targetY, currentY + climbRate);
+                    double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 5;
+                    double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 5;
+                    dragonEntity.teleportTo(targetX, newY, targetZ);
+                    dragonEntity.setDeltaMovement(Vec3.ZERO);
+                    // Try forcing hover phase
+                    dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+                } else {
+                    // Dragon reached altitude, transition from preparing to charging
+                    isPreparingLaser = false; // Stop preparing flag
+                    isLaserAttacking = true; // Start attacking flag (charge first)
+                    laserAttackTick = -LASER_CHARGE_TICKS; // Start charge timer
+                    laserTargetPos = new Vec3(spawnPos.getX(), 60, spawnPos.getZ()); // Set target
+                    laserOriginPos = dragonEntity.getEyePosition().add(dragonEntity.getViewVector(1.0f).scale(3.0)); // Set origin NOW
+                    DragonfightMod.LOGGER.info("Dragon reached altitude, starting laser charge.");
+                    notifyPlayer(world, "The dragon gathers immense energy!");
                 }
 
-                // Set laser origin once dragon is near target altitude (end of charge)
-                if (laserAttackTick == -1) { // Last tick of charge
-                     laserOriginPos = dragonEntity.getEyePosition().add(dragonEntity.getViewVector(1.0f).scale(3.0));
-                     DragonfightMod.LOGGER.info("Laser charging complete, starting fire sequence.");
-                }
+                // --- Continuous Lightning Signal (During Prep/Climb) ---
+                if (world.getGameTime() % 5 == 0) { /* ... spawn visual lightning ... */ }
 
             }
-            // --- Stage 2: Firing Phase (laserAttackTick >= 0) ---
-            else if (laserAttackTick >= 0 && laserAttackTick < LASER_FIRE_DURATION) {
-                dragonEntity.teleportTo(dragonEntity.getX(), LASER_ATTACK_ALTITUDE, dragonEntity.getZ());
-                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+            // --- Stage 1 & 2: Charging & Firing (if attacking) ---
+            else if (isLaserAttacking) {
+                laserAttackTick++;
 
-                // --- Continuous Lightning Signal (During Firing) ---
-                 if (world.getGameTime() % 5 == 0) {
-                     BlockPos lightningCenter = spawnPos.below(spawnPos.getY() - 64);
-                     LightningBolt signalLightning = EntityType.LIGHTNING_BOLT.create(world);
-                     if (signalLightning != null) {
-                         signalLightning.moveTo(lightningCenter.getX() + world.random.nextInt(5)-2,
-                                                lightningCenter.getY(),
-                                                lightningCenter.getZ() + world.random.nextInt(5)-2);
-                         signalLightning.setVisualOnly(true);
-                         world.addFreshEntity(signalLightning);
-                     }
-                 }
+                // Force position and phase during charge & fire
+                dragonEntity.teleportTo(dragonEntity.getX(), LASER_ATTACK_ALTITUDE, dragonEntity.getZ()); // Hold altitude
+                dragonEntity.setDeltaMovement(Vec3.ZERO);
+                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN); // Keep forcing hover
 
-                // --- Laser Beam Particles and Damage ---
-                if (laserOriginPos != null && laserTargetPos != null) {
-                    Vec3 direction = laserTargetPos.subtract(laserOriginPos).normalize();
-                    for (double step = 0; step < LASER_MAX_DISTANCE; step += LASER_PARTICLE_STEP) {
-                        Vec3 currentPoint = laserOriginPos.add(direction.scale(step));
-
-                        // Spawn Particles (Using currentPoint coordinates)
-                        serverLevel.sendParticles(ParticleTypes.FIREWORK, currentPoint.x, currentPoint.y, currentPoint.z, 1, 0, 0, 0, 0);
-                        serverLevel.sendParticles(ParticleTypes.END_ROD, currentPoint.x, currentPoint.y, currentPoint.z, 1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, 0.05);
-
-                        // Damage Players (Define AABB correctly)
-                        AABB damageArea = new AABB(currentPoint.x - LASER_DAMAGE_RADIUS, currentPoint.y - LASER_DAMAGE_RADIUS, currentPoint.z - LASER_DAMAGE_RADIUS,
-                                                   currentPoint.x + LASER_DAMAGE_RADIUS, currentPoint.y + LASER_DAMAGE_RADIUS, currentPoint.z + LASER_DAMAGE_RADIUS);
-                        // Get only PLAYERS within the damage area (Correct filter)
-                        List<Player> playersHit = world.getEntitiesOfClass(Player.class, damageArea,
-                            // Filter: Only hit players who are alive and not in creative/spectator mode
-                            player -> player.isAlive() && !player.isCreative() && !player.isSpectator()
-                        );
-                        // Loop through the filtered players
-                        for (Player target : playersHit) {
-                             target.hurt(world.damageSources().indirectMagic(dragonEntity, dragonEntity), LASER_DAMAGE_PER_TICK);
+                // Charging visuals
+                if (laserAttackTick < 0) {
+                    if (laserOriginPos != null) { // Update origin during charge? Optional.
+                        // laserOriginPos = dragonEntity.getEyePosition().add(dragonEntity.getViewVector(1.0f).scale(3.0));
+                    }
+                    if (world.getGameTime() % 5 == 0) { /* ... spawn visual lightning ... */ }
+                    if (laserAttackTick == -1) { DragonfightMod.LOGGER.info("Laser charging complete, starting fire sequence."); }
+                }
+                // Firing logic
+                else if (laserAttackTick >= 0 && laserAttackTick < LASER_FIRE_DURATION) {
+                    if (world.getGameTime() % 5 == 0) { /* ... spawn visual lightning ... */ }
+                    if (laserOriginPos != null && laserTargetPos != null) {
+                        // ... (Beam particle/damage loop - Ensure AABB/Filter are correct) ...
+                        Vec3 direction = laserTargetPos.subtract(laserOriginPos).normalize();
+                        for (double step = 0; step < LASER_MAX_DISTANCE; step += LASER_PARTICLE_STEP) {
+                            Vec3 currentPoint = laserOriginPos.add(direction.scale(step));
+                            serverLevel.sendParticles(ParticleTypes.FIREWORK, currentPoint.x, currentPoint.y, currentPoint.z, 1, 0, 0, 0, 0);
+                            serverLevel.sendParticles(ParticleTypes.END_ROD, currentPoint.x, currentPoint.y, currentPoint.z, 1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, (world.random.nextDouble()-0.5)*0.1, 0.05);
+                            AABB damageArea = new AABB(currentPoint.x - LASER_DAMAGE_RADIUS, currentPoint.y - LASER_DAMAGE_RADIUS, currentPoint.z - LASER_DAMAGE_RADIUS,
+                                                        currentPoint.x + LASER_DAMAGE_RADIUS, currentPoint.y + LASER_DAMAGE_RADIUS, currentPoint.z + LASER_DAMAGE_RADIUS);
+                            List<Player> playersHit = world.getEntitiesOfClass(Player.class, damageArea, player -> player.isAlive() && !player.isCreative() && !player.isSpectator());
+                            for (Player target : playersHit) {
+                                    target.hurt(world.damageSources().indirectMagic(dragonEntity, dragonEntity), LASER_DAMAGE_PER_TICK);
+                            }
                         }
                     }
                 }
-            }
-            // --- Stage 3: Finish Attack ---
-            else if (laserAttackTick >= LASER_FIRE_DURATION) {
-                isLaserAttacking = false;
-                laserCooldown = LASER_COOLDOWN_TICKS; // Start cooldown
-                DragonfightMod.LOGGER.info("Forced laser sequence finished.");
-                // Allow dragon to resume normal behavior (e.g., take off properly)
-                // It should already be in HOLDING_PATTERN, setting TAKEOFF might be good
-                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
+                // Finish attack
+                else if (laserAttackTick >= LASER_FIRE_DURATION) {
+                    isLaserAttacking = false; // Stop attacking flag
+                    laserCooldown = LASER_COOLDOWN_TICKS;
+                    DragonfightMod.LOGGER.info("Forced laser sequence finished.");
+                    // Force Takeoff to resume normal flight
+                    dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
+                }
             }
         }
         // --- End Forced Laser Sequence ---
 
+
         // --- Handle Laser Cooldown (Keep this separate) ---
-        if (!isLaserAttacking && laserCooldown > 0) { // Only tick down if not attacking
+        if (!isPreparingLaser && !isLaserAttacking && laserCooldown > 0) { // Only tick down if not preparing or attacking
             laserCooldown--;
         }
 
@@ -467,7 +456,7 @@ public class DragonFightManagerCustom
 
         if (dragonEntity != null && advancingExplosionCurrent == 0 && advancingLightningCurrent == 0)
         {
-            advancingExplosionCurrent = 8;
+            advancingExplosionCurrent = 5;
             advancingExplosionStop = 80;
         }
 
@@ -550,6 +539,7 @@ public class DragonFightManagerCustom
         spawnAdds = false;
         spawnCounter = 0;
 
+        isPreparingLaser = false;
         isLaserAttacking = false;
         laserAttackTick = 0;
         laserTargetPos = null;
@@ -602,7 +592,7 @@ public class DragonFightManagerCustom
         final LivingEntity entity =
           (LivingEntity) spawnEntity((ServerLevel) world, spawnOnDragonSitting.get(DragonfightMod.rand.nextInt(spawnOnDragonSitting.size())), createVec3(searchedPos));
 
-        final List<Player> closesPlayers = world.getNearbyPlayers(TargetingConditions.DEFAULT, entity, entity.getBoundingBox().inflate(30));
+        final List<Player> closesPlayers = world.getNearbyPlayers(TargetingConditions.DEFAULT, entity, entity.getBoundingBox().inflate(40));
         if (!closesPlayers.isEmpty())
         {
             final Player closestPlayer = closesPlayers.get(DragonfightMod.rand.nextInt(closesPlayers.size()));
@@ -708,8 +698,8 @@ public class DragonFightManagerCustom
                         }
                     }
                     if (!positionFound) {
-                         // If still no spot found after attempts, fallback to base + 0.1Y
-                         finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                         // If still no spot found after attempts, fallback to base -1Y
+                         finalSpawnVec = baseSpawnVec.add(spawn_offset, -1, spawn_offset);
                          DragonfightMod.LOGGER.debug("Could not find clear offset spawn for {}, using base.", typeId);
                     } else {
                          DragonfightMod.LOGGER.debug("Using offset spawn for {} at {}", typeId, finalSpawnVec);
@@ -812,10 +802,15 @@ public class DragonFightManagerCustom
 
         if (newPhase == EnderDragonPhase.TAKEOFF)
         {
-            // Start spawning endermen
-            spawnAdds = true;
-
+            spawnAdds = true; // Always start melee adds on takeoff
             checkCrystalsToRespawn(dragon.level());
+
+            if (preparingLaserSequence) {
+                 // If we were preparing the laser, this takeoff is the start of the climb
+                 DragonfightMod.LOGGER.info("Dragon taking off to initiate laser sequence climb.");
+                 // The actual climb/charge/fire logic is handled in onWorldTick based on the 'preparingLaserSequence' flag
+            } else {
+                 // Normal takeoff (laser not prepared), handle low health effects
             if ((dragon.getHealth() / dragon.getMaxHealth()) < 0.50d && dragon.getDragonFight() != null)
             {   // trigger when 50% hp
                 
@@ -829,52 +824,50 @@ public class DragonFightManagerCustom
                   false);
                 for (final Player playerEntity : ((IDragonfightAccessor) dragon.getDragonFight()).getDragonEvent().getPlayers())
                 {
-                    playerEntity.addEffect(new MobEffectInstance(MobEffects.WITHER, 200, 4));
-                    playerEntity.addEffect(new MobEffectInstance(MobEffects.LEVITATION, 200, 220));
+                    playerEntity.addEffect(new MobEffectInstance(MobEffects.WITHER, 200, 5));
+                    playerEntity.addEffect(new MobEffectInstance(MobEffects.HARM, 100, 5));
                     playerEntity.sendSystemMessage(Component.literal("The dragon's power drains your spirit and our soul").withStyle(ChatFormatting.RED));
                 }
-                
             }
         }
         if ((newPhase == EnderDragonPhase.LANDING_APPROACH) || (newPhase == EnderDragonPhase.DYING))
         {
-            // Stop spawning
             timeSinceLastLanding = 0;
             spawnAdds = false;
-            if (isLaserAttacking) {
+            // Interrupt any laser sequence if landing/dying
+            if (isLaserAttacking || preparingLaserSequence) {
                 isLaserAttacking = false;
-                DragonfightMod.LOGGER.info("Forced laser sequence interrupted by landing/death.");
+                preparingLaserSequence = false;
+                DragonfightMod.LOGGER.info("Laser sequence interrupted by landing/death.");
             }
         }
         if (oldphase == EnderDragonPhase.LANDING && newPhase == EnderDragonPhase.SITTING_SCANNING)
         {
             timeSinceLastLanding = 0;
-            if (!isLaserAttacking && laserCooldown <= 0) { // Only start if not already attacking or cooling down
-                isLaserAttacking = true; // Use this flag to signify the whole sequence
-                laserAttackTick = -LASER_CHARGE_TICKS; // Start with charging phase
-                // Target position for laser beam remains the center base
-                laserTargetPos = new Vec3(spawnPos.getX(), 60, spawnPos.getZ());
-                laserOriginPos = null; // Origin will be set once dragon reaches altitude
-
-                DragonfightMod.LOGGER.info("Dragon landed - Initiating forced laser sequence.");
-                notifyPlayer(dragon.level(), "The dragon prepares a powerful attack!");
-
-                // Force the dragon to take off immediately
-                dragon.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
-            } else{
-                final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
-                if (healthpercent < 0.8d)
-                {
-                    advancingLightningCurrent = 6;
-                    advancingLightningStop = 50;
-                }
-                else
-                {
-                    spawnLightningAtCircle(spawnPos, DragonfightMod.rand.nextInt(16) + 8, dragon.level());
-                }
+            // Decide if we should start the sequence (only if not already attacking/cooling down)
+            if (!isLaserAttacking && laserCooldown <= 0 && !preparingLaserSequence) {
+                 // Random chance to trigger the sequence after landing
+                 if (dragon.level().random.nextInt(2) == 0) { // 50% chance after landing
+                     preparingLaserSequence = true; // Set flag to start climbing on next takeoff
+                     DragonfightMod.LOGGER.info("Dragon landed - Preparing forced laser sequence.");
+                     notifyPlayer(dragon.level(), "The dragon seems to gather power...");
+                     // Force immediate takeoff to begin the sequence
+                     dragon.getPhaseManager().setPhase(EnderDragonPhase.TAKEOFF);
+                 } else {
+                      // Didn't trigger laser, do normal landing lightning
+                      final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
+                      if (healthpercent < 0.8d) { advancingLightningCurrent = 6; advancingLightningStop = 50; }
+                      else { spawnLightningAtCircle(spawnPos, DragonfightMod.rand.nextInt(16) + 8, dragon.level()); }
+                 }
+            } else {
+                 // Laser already active or cooling down, just do normal landing lightning
+                 final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
+                 if (healthpercent < 0.8d) { advancingLightningCurrent = 6; advancingLightningStop = 50; }
+                 else { spawnLightningAtCircle(spawnPos, DragonfightMod.rand.nextInt(16) + 8, dragon.level()); }
             }
         }
     }
+}
 
     private static void checkCrystalsToRespawn(final Level world)
     {
@@ -957,28 +950,82 @@ public class DragonFightManagerCustom
      * @param radius
      * @param world
      */
-    private static void explodeInCircleAround(final BlockPos midPoint, final int radius, final Level world)
-    {
-        Set<BlockPos> explodePos = getCircularPositionsAround(midPoint, radius, 15);
-        for (final BlockPos lightningPos : explodePos)
-        {
-            // i want to change this to hit everything within the circle randomly
-            final int yLevel = 64;
-            notifyPlayer(world,
-              "spawning explosion at!" + new BlockPos(lightningPos.getX(),
-                yLevel,
-                lightningPos.getZ()));
-            //final int yLevel = world.getHeightmapPos(WORLD_SURFACE, lightningPos).getY();
-            // explosion sometimes is goes off on air, ill just force it to the common Y position
-            // Dont hit too varied height differences
-            world.explode(dragonEntity,
-                lightningPos.getX(),
-                yLevel,
-                lightningPos.getZ(),
-                1 + getDifficulty() / 4f,
-                false,
-                Level.ExplosionInteraction.MOB);
+    private static void explodeInCircleAround(final BlockPos midPoint, final int radius, final Level world) {
+        // Get positions for a filled circle, not just the edge
+        Set<BlockPos> circlePositions = getFilledCirclePositions(midPoint, radius);
+        
+        // Choose a random subset of positions for explosions (more explosions for larger radius)
+        int explosionCount = 10 + (radius / 3);  // Scale with radius
+        List<BlockPos> explosionPositions = getRandomPositionsFromSet(circlePositions, explosionCount);
+        
+        for (final BlockPos explosionPos : explosionPositions) {
+            // Find the surface level by checking down until we find a non-air block
+            BlockPos surfacePos = findSurfacePosition(world, explosionPos);
+            
+            if (surfacePos != null) {
+                notifyPlayer(world, "Spawning explosion at: " + surfacePos);
+                
+                world.explode(dragonEntity,
+                    surfacePos.getX() + 0.5,
+                    surfacePos.getY() + 1,  // Explode just above the surface
+                    surfacePos.getZ() + 0.5,
+                    5.0f + getDifficulty() / 2.0f,
+                    false,
+                    Level.ExplosionInteraction.MOB);
+            }
         }
+    }
+
+    private static Set<BlockPos> getFilledCirclePositions(BlockPos center, int radius) {
+        Set<BlockPos> positions = new HashSet<>();
+        int radiusSquared = radius * radius;
+        
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
+                // Check if this position is within the circle (x²+z² ≤ r²)
+                if (x * x + z * z <= radiusSquared) {
+                    positions.add(new BlockPos(center.getX() + x, center.getY(), center.getZ() + z));
+                }
+            }
+        }
+        
+        return positions;
+    }
+    
+    private static List<BlockPos> getRandomPositionsFromSet(Set<BlockPos> positions, int count) {
+        List<BlockPos> posList = new ArrayList<>(positions);
+        Collections.shuffle(posList, DragonfightMod.rand);  // Use the mod's random instance
+        
+        // Return either the requested count or all positions if there are fewer than requested
+        return posList.subList(0, Math.min(count, posList.size()));
+    }
+
+    private static BlockPos findSurfacePosition(Level world, BlockPos pos) {
+        int startY = 70;
+        
+
+        if (pos.getY() < startY) {
+            startY = pos.getY();
+        }
+        
+        BlockPos checkPos = new BlockPos(pos.getX(), startY, pos.getZ());
+        
+        boolean inAir = world.getBlockState(checkPos).isAir();
+        
+        if (!inAir) {
+            while (!world.getBlockState(checkPos).isAir() && checkPos.getY() < world.getMaxBuildHeight() - 2) {
+                checkPos = checkPos.above();
+            }
+        }
+        while (world.getBlockState(checkPos).isAir() && checkPos.getY() > 40) {
+            checkPos = checkPos.below();
+        }
+        if (!world.getBlockState(checkPos).isAir()) {
+            return checkPos;
+        }
+        
+        // Fallback to the original position if we didn't find a surface
+        return pos;
     }
 
     private static Set<BlockPos> getCircularPositionsAround(final BlockPos start, final int radius, int precision)
