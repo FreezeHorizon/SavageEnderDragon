@@ -26,8 +26,8 @@ public class DragonFireballEntityMixin
           rayTraceResult.getLocation().x,
           rayTraceResult.getLocation().y,
           rayTraceResult.getLocation().z,
-          0.5f,
+          3f,
           false,
-          Level.ExplosionInteraction.NONE);
+          Level.ExplosionInteraction.MOB);
     }
 }

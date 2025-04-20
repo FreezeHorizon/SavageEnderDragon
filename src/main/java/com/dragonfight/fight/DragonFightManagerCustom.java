@@ -34,6 +34,7 @@ import net.minecraft.world.entity.npc.Npc;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.end.EndDragonFight;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -49,6 +50,20 @@ public class DragonFightManagerCustom
     public static ImmutableList<ConfigurationCache.ConfiguredSpawnData> spawnOnCrystalDeath   = ImmutableList.of();
     public static ImmutableList<ConfigurationCache.ConfiguredSpawnData> spawnOnCrystalRespawn = ImmutableList.of();
     public static ImmutableList<ConfigurationCache.EntitySpawnData> spawnOnDragonSitting  = ImmutableList.of();
+
+    /* 
+     * Lazer attack
+    */
+
+    private static boolean isSpiralAttackActive = false;
+    private static int spiralAttackTick = 0;
+    private static final int SPIRAL_ATTACK_DURATION = 400; // Ticks (20 seconds) 
+    private static final double SPIRAL_EXPANSION_RATE = 0.5; // Blocks per tick outward expansion
+    private static final double SPIRAL_ROTATION_SPEED = 10.0; // Degrees per tick rotation
+    private static final int SPIRAL_PARTICLE_DENSITY = 3; // Higher = more particles per step
+    private static final float SPIRAL_DAMAGE_PER_HIT = 40.0f; // Damage applied to entities hit
+    private static final double SPIRAL_DAMAGE_RADIUS = 2.0; // How close entities need to be to the particle point
+    private static int max_LASER_RADIUS = 100;
 
     private static final float    CRYSTAL_RESPAWN_TIME    = 8000;
     private static final int      LIGHTNING_DESTROY_RANGE = 10 * 10;
@@ -129,32 +144,51 @@ public class DragonFightManagerCustom
 
                 DragonfightMod.LOGGER.info("{} Crystal destroyed at range. Processing configured spawns...", destroyedCrystalPos);
 
-                // Iterate through ALL configured entries for this event
                 for (ConfigurationCache.ConfiguredSpawnData configuredSpawnData : spawnOnCrystalDeath) {
-                    EntitySpawnData spawnData = configuredSpawnData.entityData(); // Use data directly from config parsing
+                    EntitySpawnData spawnData = configuredSpawnData.entityData();
                     String locationPref = configuredSpawnData.locationPreference();
                     ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(spawnData.type);
-
-                    // Determine spawn location based on config preference
-                    Vec3 targetSpawnVec;
+    
+                    // Determine BASE spawn location based on config preference
+                    Vec3 baseSpawnVec;
                     if (locationPref.equals("pillar_top")) {
-                        targetSpawnVec = pillarTopVec;
-                        DragonfightMod.LOGGER.info("Spawning {} at pillar top.", typeId);
+                        baseSpawnVec = pillarTopVec;
+                        DragonfightMod.LOGGER.debug("Base location Pillar Top for {}.", typeId);
                     } else { // Default to ground_level
-                        targetSpawnVec = groundVec;
-                        DragonfightMod.LOGGER.info("Spawning {} at ground level near {}.", typeId, groundSpawnPos);
+                        baseSpawnVec = groundVec;
+                        DragonfightMod.LOGGER.debug("Base location Ground Level near {} for {}.", groundSpawnPos, typeId);
                     }
-
+    
+                    
+                    double spreadRadius = 3.0; // How far out horizontally to spread mobs
+                    double offsetX = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                    double offsetZ = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                    // Add slight Y offset to prevent spawning in floor, ensure it's valid
+                    Vec3 finalSpawnVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
+    
+                    // Ensure the final spot is loadable/safe-ish (basic air check)
+                    BlockPos finalSpawnBlockPos = BlockPos.containing(finalSpawnVec);
+                    if (!enderCrystalEntity.level().getBlockState(finalSpawnBlockPos).isAir() || !enderCrystalEntity.level().getBlockState(finalSpawnBlockPos.above()).isAir()) {
+                        finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                        DragonfightMod.LOGGER.debug("Offset spawn for {} blocked, using base.", typeId);
+                    }    
                     // Spawn the entity using the final data and target location
-                    // NO special case override needed here anymore
-                    spawnEntity((ServerLevel) enderCrystalEntity.level(), spawnData, targetSpawnVec);
-                    DragonfightMod.LOGGER.info("Spawning {} at {}.",spawnData, targetSpawnVec);
+                    Entity spawnedEntity = spawnEntity((ServerLevel) enderCrystalEntity.level(), spawnData, finalSpawnVec);
+                    if (spawnedEntity instanceof Mob mob) {
+                         Player targetPlayer = enderCrystalEntity.level().getNearestPlayer(mob, 150); // Find nearest player
+                         if (targetPlayer != null) {
+                             mob.setTarget(targetPlayer);
+                             DragonfightMod.LOGGER.debug("Set target for {} to {}", typeId, targetPlayer.getName().getString());
+                         } else {
+                             DragonfightMod.LOGGER.debug("Could not find player target for {}", typeId);
+                         }
                     }
+    
                 }
                 
             }
-            // removed melee kill reducing dragon hp
         }
+    }
 
     private static void addCrystalRespawnPos(final BlockPos position)
     {
@@ -254,6 +288,53 @@ public class DragonFightManagerCustom
         if (!isFightRunning)
         {
             return;
+        }
+
+        if (isSpiralAttackActive) {
+            spiralAttackTick++;
+
+            // Calculate current spiral parameters
+            double currentRadius = spiralAttackTick * SPIRAL_EXPANSION_RATE;
+            double currentAngleRad = Math.toRadians(spiralAttackTick * SPIRAL_ROTATION_SPEED);
+
+            // Calculate position on the spiral relative to center (spawnPos)
+            double xOffset = currentRadius * Math.cos(currentAngleRad);
+            double zOffset = currentRadius * Math.sin(currentAngleRad);
+            double absoluteX = spawnPos.getX() + xOffset;
+            double absoluteZ = spawnPos.getZ() + zOffset;
+            // Use a fixed Y for simplicity, or get ground height
+            int blockX = (int) Math.floor(absoluteX); // Get block coordinates
+            int blockZ = (int) Math.floor(absoluteZ);
+            int surfaceY = world.getHeight(Heightmap.Types.WORLD_SURFACE, blockX, blockZ);
+            if (surfaceY < world.getMinBuildHeight() + 5 || surfaceY < 50) {
+                DragonfightMod.LOGGER.debug("Spiral attack point ({}, {}) is too low (Y={}), skipping effect.", blockX, blockZ, surfaceY);
+            } else {
+                double yPos = surfaceY + 0.2; // Place slightly above the ground block
+                Vec3 currentSpiralPosVec = new Vec3(absoluteX, yPos, absoluteZ);
+                BlockPos currentSpiralPosBlock = new BlockPos(blockX, surfaceY, blockZ); // BlockPos at the surface level
+                if (world instanceof ServerLevel serverLevel) {
+                    for (int i = 0; i < SPIRAL_PARTICLE_DENSITY; i++) {
+                        // Add some randomness to particle position for a thicker beam effect
+                        double px = currentSpiralPosVec.x + (world.random.nextDouble() - 0.5) * 1.5;
+                        double py = currentSpiralPosVec.y + (world.random.nextDouble() - 0.5) * 1.0;
+                        double pz = currentSpiralPosVec.z + (world.random.nextDouble() - 0.5) * 1.5;
+                        // Use firework particles as requested
+                        serverLevel.sendParticles(ParticleTypes.FIREWORK, px, py, pz, 1, 0, 0, 0, 0);
+                        // Maybe add another type for variety?
+                    }
+                }
+                AABB damageArea = new AABB(currentSpiralPosBlock).inflate(SPIRAL_DAMAGE_RADIUS);
+                List<LivingEntity> entitiesToDamage = world.getEntitiesOfClass(LivingEntity.class, damageArea,player -> player.isAlive());
+                for (LivingEntity target : entitiesToDamage) {
+                     target.hurt(world.damageSources().magic(), SPIRAL_DAMAGE_PER_HIT);
+                     target.addEffect(new MobEffectInstance(MobEffects.GLOWING, 60, 0));
+                     target.addEffect(new MobEffectInstance(MobEffects.HARM, 40 , 10));
+                }
+            }
+            if (spiralAttackTick >= SPIRAL_ATTACK_DURATION || currentRadius > max_LASER_RADIUS) { // Stop after duration or reaching 100 blocks
+                isSpiralAttackActive = false;
+                DragonfightMod.LOGGER.info("Spiral attack sequence finished.");
+            }
         }
 
         // Fix dragon flying forever on death
@@ -485,9 +566,35 @@ public class DragonFightManagerCustom
     {
         if (world.getEntitiesOfClass(EndCrystal.class, new AABB(pos).inflate(2)).isEmpty())
         {
+            if (pos.getX() * pos.getX() + pos.getZ() * pos.getZ() < 10*10) { // Simple squared distance check (within 10 blocks horizontally)
+                DragonfightMod.LOGGER.info("Skipping crystal respawn at {} due to proximity to exit portal area.", pos);
+                // Remove invalid position and try next one
+                CrystalLevelData.getForLevel((ServerLevel) world).removePosition(pos);
+                crystalRespawnPos = null; // Clear current target
+                checkCrystalsToRespawn(world); // Trigger check for a different position
+                return;
+            }
+            // Check if block below is bedrock (ensure it's on a proper pillar)
+            if (!world.getBlockState(pos.below()).is(net.minecraft.world.level.block.Blocks.BEDROCK)) {
+                DragonfightMod.LOGGER.info("Skipping crystal respawn at {} as block below is not bedrock.", pos);
+                // Remove invalid position and try next one
+                CrystalLevelData.getForLevel((ServerLevel) world).removePosition(pos);
+                crystalRespawnPos = null; // Clear current target
+                checkCrystalsToRespawn(world); // Trigger check for a different position
+                return;
+            }
+            if (!world.getEntitiesOfClass(EndCrystal.class, new AABB(pos).inflate(2)).isEmpty()) {
+            // Crystal already exists, maybe it spawned naturally? Remove from our list.
+            DragonfightMod.LOGGER.info("Crystal already exists at {}, removing from respawn queue.", pos);
+            CrystalLevelData.getForLevel((ServerLevel) world).removePosition(pos);
+            crystalRespawnPos = null;
+            checkCrystalsToRespawn(world);
+            return; // Stop this attempt
+            }
             // Respawn crystal
+            DragonfightMod.LOGGER.info("Respawning crystal at {}", pos);
             final EndCrystal crystal = (EndCrystal) spawnEntity((ServerLevel) world, new ConfigurationCache.EntitySpawnData(EntityType.END_CRYSTAL, null), createVec3(pos));
-            
+
             if (!spawnOnCrystalRespawn.isEmpty())
             {
                 BlockPos pillarTopPos = new BlockPos (pos.getX()+2, pos.getY()-1, pos.getZ()-3);
@@ -499,25 +606,49 @@ public class DragonFightManagerCustom
                 DragonfightMod.LOGGER.info("Crystal respawning. Processing configured spawns...");
 
                 for (ConfigurationCache.ConfiguredSpawnData configuredSpawnData : spawnOnCrystalRespawn) {
-                     EntitySpawnData spawnData = configuredSpawnData.entityData();
-                     String locationPref = configuredSpawnData.locationPreference();
-                     ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(spawnData.type);
-
-                     // Determine spawn location based on config preference
-                     Vec3 targetSpawnVec;
-                     if (locationPref.equals("pillar_top")) {
-                          targetSpawnVec = pillarTopVec;
-                          DragonfightMod.LOGGER.info("Spawning {} at pillar top.", typeId);
-                     } else { // Default to ground_level
-                          targetSpawnVec = groundVec;
-                          DragonfightMod.LOGGER.info("Spawning {} at ground level near {}.", typeId, groundSpawnPos);
-                     }
-
-                     // Spawn the entity using the original data and target location
-                    spawnEntity((ServerLevel) world, spawnData, targetSpawnVec);
-                    DragonfightMod.LOGGER.info("[{}]Spawning {} at {}.",(ServerLevel) world,spawnData, targetSpawnVec);
-
-                }
+                    EntitySpawnData spawnData = configuredSpawnData.entityData();
+                    String locationPref = configuredSpawnData.locationPreference();
+                    ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(spawnData.type);
+   
+                    // Determine BASE spawn location based on config preference
+                    Vec3 baseSpawnVec;
+                    if (locationPref.equals("pillar_top")) {
+                         baseSpawnVec = pillarTopVec;
+                         DragonfightMod.LOGGER.debug("Base location Pillar Top for {}.", typeId);
+                    } else { // Default to ground_level
+                         baseSpawnVec = groundVec;
+                         DragonfightMod.LOGGER.debug("Base location Ground Level near {} for {}.", groundSpawnPos, typeId);
+                    }
+   
+                    // --- ADD RANDOM OFFSET ---
+                    double spreadRadius = 3.0;
+                    double offsetX = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                    double offsetZ = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                    Vec3 finalSpawnVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
+   
+                    BlockPos finalSpawnBlockPos = BlockPos.containing(finalSpawnVec);
+                    if (!world.getBlockState(finalSpawnBlockPos).isAir() || !world.getBlockState(finalSpawnBlockPos.above()).isAir()) {
+                        finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                        DragonfightMod.LOGGER.debug("Offset spawn for {} blocked, using base.", typeId);
+                    }
+                    // --- END RANDOM OFFSET ---
+   
+                    // Spawn the entity using the original data and target location
+                    Entity spawnedEntity = spawnEntity((ServerLevel) world, spawnData, finalSpawnVec);
+   
+                    // --- FORCE PLAYER TARGET ---
+                    if (spawnedEntity instanceof Mob mob) {
+                         Player targetPlayer = world.getNearestPlayer(mob, 150);
+                         if (targetPlayer != null) {
+                             mob.setTarget(targetPlayer);
+                             DragonfightMod.LOGGER.debug("Set target for {} to {}", typeId, targetPlayer.getName().getString());
+                         } else {
+                             DragonfightMod.LOGGER.debug("Could not find player target for {}", typeId);
+                         }
+                    }
+                    // --- END FORCE PLAYER TARGET ---
+   
+               }
             }
 
             float f = (DragonfightMod.rand.nextFloat() - 0.5F) * 8.0F;
@@ -582,9 +713,19 @@ public class DragonFightManagerCustom
             // Start spawning endermen
             spawnAdds = true;
 
+            if (!isSpiralAttackActive) { // Prevent starting if already active
+                isSpiralAttackActive = true;
+                spiralAttackTick = 0; // Reset timer
+                DragonfightMod.LOGGER.info("Dragon landed - Starting spiral attack sequence!");
+                notifyPlayer(dragon.level(), "Dragon Lazer attack");
+                for (final Player player : ((IDragonfightAccessor) manager).getDragonEvent().getPlayers()){
+                    player.sendSystemMessage(Component.literal("The dragon charges energy!").withStyle(ChatFormatting.LIGHT_PURPLE));
+                }
+            }
+
             checkCrystalsToRespawn(dragon.level());
-            if ((dragon.getHealth() / dragon.getMaxHealth()) < 0.25d && dragon.getDragonFight() != null)
-            {
+            if ((dragon.getHealth() / dragon.getMaxHealth()) < 0.50d && dragon.getDragonFight() != null)
+            {   // trigger when 50% hp
                 
                 dragon.level().playLocalSound(dragon.getX(),
                   dragon.getY(),
@@ -614,7 +755,7 @@ public class DragonFightManagerCustom
             timeSinceLastLanding = 0;
 
             final double healthpercent = (dragon.getHealth() / dragon.getMaxHealth());
-            if (healthpercent < 0.5d)
+            if (healthpercent < 0.8d)
             {
                 advancingLightningCurrent = 6;
                 advancingLightningStop = 50;
@@ -727,7 +868,7 @@ public class DragonFightManagerCustom
                 lightningPos.getZ(),
                 1 + getDifficulty() / 4f,
                 false,
-                Level.ExplosionInteraction.NONE);
+                Level.ExplosionInteraction.MOB);
         }
     }
 
