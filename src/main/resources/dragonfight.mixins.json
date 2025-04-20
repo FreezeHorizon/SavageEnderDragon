@@ -11,8 +11,7 @@
     "dragon.EnderDragonEntityMixin",
     "dragon.LightningBoldSoundMixin",
     "dragon.NaturalSpawnerMixin",
-    "dragon.PhaseManagerMixin",
-    "dragon.PlayerTickMixin"
+    "dragon.PhaseManagerMixin"
   ],
   "client": [
   ],
