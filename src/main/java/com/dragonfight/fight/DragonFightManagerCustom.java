@@ -594,8 +594,6 @@ public class DragonFightManagerCustom
         print_hp_timer = 0;
         globalLevitationEventTimer = 0;
 
-        // flyingPlayers map removed earlier, no need to clear
-
         if (DragonfightMod.server == null) { return; }
         // Clear melee adds list safely
         if (meleeAdds != null) {

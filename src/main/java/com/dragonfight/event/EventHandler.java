@@ -3,7 +3,6 @@ package com.dragonfight.event;
 import com.dragonfight.fight.DragonFightManagerCustom;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
@@ -31,15 +30,6 @@ public class EventHandler
             {
                 ci.cancel();
             }
-        }
-    }
-
-    public static void onPlayerTick(final Player player)
-    {
-        final Integer flyTime = DragonFightManagerCustom.flyingPlayers.get(player.getUUID());
-        if (flyTime != null && !player.isCreative())
-        {
-            player.getAbilities().flying = false;
         }
     }
 }
