@@ -16,6 +16,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -165,28 +166,30 @@ public class DragonFightManagerCustom
                     }
     
                     
-                    double spreadRadius = 3.0; // How far out horizontally to spread mobs
-                    double offsetX = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                    double offsetZ = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                    // Add slight Y offset to prevent spawning in floor, ensure it's valid
-                    Vec3 finalSpawnVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
-    
-                    // Ensure the final spot is loadable/safe-ish (basic air check)
-                    BlockPos finalSpawnBlockPos = BlockPos.containing(finalSpawnVec);
-                    if (!enderCrystalEntity.level().getBlockState(finalSpawnBlockPos).isAir() || !enderCrystalEntity.level().getBlockState(finalSpawnBlockPos.above()).isAir()) {
-                        finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
-                        DragonfightMod.LOGGER.debug("Offset spawn for {} blocked, using base.", typeId);
-                    }    
-                    // Spawn the entity using the final data and target location
-                    Entity spawnedEntity = spawnEntity((ServerLevel) enderCrystalEntity.level(), spawnData, finalSpawnVec);
-                    if (spawnedEntity instanceof Mob mob) {
-                         Player targetPlayer = enderCrystalEntity.level().getNearestPlayer(mob, 150); // Find nearest player
-                         if (targetPlayer != null) {
-                             mob.setTarget(targetPlayer);
-                             DragonfightMod.LOGGER.debug("Set target for {} to {}", typeId, targetPlayer.getName().getString());
-                         } else {
-                             DragonfightMod.LOGGER.debug("Could not find player target for {}", typeId);
-                         }
+                    double spreadRadius = 5.0; // Increased spread radius
+                    Vec3 finalSpawnVec = baseSpawnVec; // Start with base
+                    boolean positionFound = false;
+                    for (int attempt = 0; attempt < 5; attempt++) { // Try up to 5 times to find a clear offset spot
+                        // Use enderCrystalEntity.level() here:
+                        double offsetX = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                        double offsetZ = (enderCrystalEntity.level().random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                        Vec3 potentialVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
+                        BlockPos potentialBlockPos = BlockPos.containing(potentialVec);
+
+                        // Check if the potential spot and the space above are air
+                        // Use enderCrystalEntity.level() here:
+                        if (enderCrystalEntity.level().getBlockState(potentialBlockPos).isAir() && enderCrystalEntity.level().getBlockState(potentialBlockPos.above()).isAir()) {
+                            finalSpawnVec = potentialVec; // Found a good spot
+                            positionFound = true;
+                            break; // Stop trying
+                        }
+                    }
+                    if (!positionFound) {
+                         // If still no spot found after attempts, fallback to base + 0.1Y
+                         finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                         DragonfightMod.LOGGER.debug("Could not find clear offset spawn for {}, using base.", typeId);
+                    } else {
+                         DragonfightMod.LOGGER.debug("Using offset spawn for {} at {}", typeId, finalSpawnVec);
                     }
     
                 }
@@ -341,9 +344,8 @@ public class DragonFightManagerCustom
             }
             // --- Stage 2: Firing Phase (laserAttackTick >= 0) ---
             else if (laserAttackTick >= 0 && laserAttackTick < LASER_FIRE_DURATION) {
-                // Keep forcing position high? Optional, might look jerky.
-                // dragonEntity.teleportTo(dragonEntity.getX(), LASER_ATTACK_ALTITUDE, dragonEntity.getZ());
-                // dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+                dragonEntity.teleportTo(dragonEntity.getX(), LASER_ATTACK_ALTITUDE, dragonEntity.getZ());
+                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
 
                 // --- Continuous Lightning Signal (During Firing) ---
                  if (world.getGameTime() % 5 == 0) {
@@ -689,37 +691,68 @@ public class DragonFightManagerCustom
                          DragonfightMod.LOGGER.debug("Base location Ground Level near {} for {}.", groundSpawnPos, typeId);
                     }
    
-                    // --- ADD RANDOM OFFSET ---
-                    double spreadRadius = 3.0;
-                    double offsetX = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                    double offsetZ = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0;
-                    Vec3 finalSpawnVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
-   
-                    BlockPos finalSpawnBlockPos = BlockPos.containing(finalSpawnVec);
-                    if (!world.getBlockState(finalSpawnBlockPos).isAir() || !world.getBlockState(finalSpawnBlockPos.above()).isAir()) {
-                        finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
-                        DragonfightMod.LOGGER.debug("Offset spawn for {} blocked, using base.", typeId);
+                    double spreadRadius = 5.0; // Increased spread radius
+                    Vec3 finalSpawnVec = baseSpawnVec; // Start with base
+                    boolean positionFound = false;
+                    for (int attempt = 0; attempt < 5; attempt++) { // Try up to 5 times to find a clear offset spot
+                        double offsetX = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0; // Use 'world' variable here
+                        double offsetZ = (world.random.nextDouble() - 0.5) * spreadRadius * 2.0;
+                        Vec3 potentialVec = baseSpawnVec.add(offsetX, 0.1, offsetZ);
+                        BlockPos potentialBlockPos = BlockPos.containing(potentialVec);
+    
+                        // Check if the potential spot and the space above are air
+                        if (world.getBlockState(potentialBlockPos).isAir() && world.getBlockState(potentialBlockPos.above()).isAir()) {
+                            finalSpawnVec = potentialVec; // Found a good spot
+                            positionFound = true;
+                            break; // Stop trying
+                        }
                     }
-                    // --- END RANDOM OFFSET ---
-   
+                    if (!positionFound) {
+                         // If still no spot found after attempts, fallback to base + 0.1Y
+                         finalSpawnVec = baseSpawnVec.add(0, 0.1, 0);
+                         DragonfightMod.LOGGER.debug("Could not find clear offset spawn for {}, using base.", typeId);
+                    } else {
+                         DragonfightMod.LOGGER.debug("Using offset spawn for {} at {}", typeId, finalSpawnVec);
+                    }
+
                     // Spawn the entity using the original data and target location
                     Entity spawnedEntity = spawnEntity((ServerLevel) world, spawnData, finalSpawnVec);
    
-                    // --- FORCE PLAYER TARGET ---
                     if (spawnedEntity instanceof Mob mob) {
-                         Player targetPlayer = world.getNearestPlayer(mob, 150);
-                         if (targetPlayer != null) {
-                             mob.setTarget(targetPlayer);
-                             DragonfightMod.LOGGER.debug("Set target for {} to {}", typeId, targetPlayer.getName().getString());
-                         } else {
-                             DragonfightMod.LOGGER.debug("Could not find player target for {}", typeId);
-                         }
+                        Player targetPlayer = null;
+                        double minPlayerDistSq = Double.MAX_VALUE;
+                        // Get players specifically from the boss fight context
+                        final EndDragonFight fightManager = ((ServerLevel) world).getDragonFight(); // Use 'world' variable here
+                        if (fightManager != null) {
+                            // Change List<Player> to Collection<ServerPlayer> or List<ServerPlayer>
+                            // Let's use Collection as it's more general if the exact return type isn't List
+                            Collection<ServerPlayer> candidates = ((IDragonfightAccessor) fightManager).getDragonEvent().getPlayers();
+                            // Iterate using ServerPlayer
+                            for (ServerPlayer p : candidates) {
+                                // Target only living players in survival/adventure within range
+                                // No need to check !p.isCreative() as ServerPlayer doesn't have that directly, use abilities
+                                // Use p.gameMode.isSurvival() or p.gameMode.isAdventure()
+                                if (p != null && p.isAlive() && !p.isSpectator() && (p.gameMode.isSurvival())) {
+                                    double distSq = mob.distanceToSqr(p);
+                                    if (distSq < minPlayerDistSq && distSq < 150 * 150) { // Check range
+                                        minPlayerDistSq = distSq;
+                                        targetPlayer = p; // Can assign ServerPlayer to Player variable
+                                    }
+                                }
+                            }
+                        }
+
+                        // Set target if a suitable one was found
+                        if (targetPlayer != null) {
+                            mob.setTarget(targetPlayer);
+                            DragonfightMod.LOGGER.debug("Set target for {} to survival/adventure player {}", typeId, targetPlayer.getName().getString());
+                        } else {
+                            DragonfightMod.LOGGER.debug("Could not find suitable (survival/adventure) player target for {}", typeId);
+                        }
                     }
                     // --- END FORCE PLAYER TARGET ---
-   
-               }
+                }
             }
-
             float f = (DragonfightMod.rand.nextFloat() - 0.5F) * 8.0F;
             float f1 = (DragonfightMod.rand.nextFloat() - 0.5F) * 4.0F;
             float f2 = (DragonfightMod.rand.nextFloat() - 0.5F) * 8.0F;
