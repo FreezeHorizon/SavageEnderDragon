@@ -284,9 +284,13 @@ public class DragonFightManagerCustom
         // --- Final Phase Check ---
         if (!isFinalPhaseActive && dragonEntity.isAlive() && (dragonEntity.getHealth() / dragonEntity.getMaxHealth()) < 0.20f) {
             isFinalPhaseActive = true;
-            DragonfightMod.LOGGER.info("Dragon below 10% HP - Entering FINAL PHASE!");
+            DragonfightMod.LOGGER.info("Dragon below 20% HP - Entering FINAL PHASE!");
             notifyAllPlayersInFight(world, Component.literal("The Dragon enters its final stand! All crystals return!").withStyle(ChatFormatting.DARK_RED, ChatFormatting.BOLD));
             respawnAllCrystalsOnce(world);
+            BlockPos middleArea = new BlockPos(0,65,0);
+            spawnLightningAtCircle(middleArea, 10, world);
+            spawnLightningAtCircle(middleArea, 2, world);
+            spawnLightningAtCircle(middleArea, 20, world);
             advancingExplosionCurrent = 20; advancingExplosionStop = 300; // near constant explosions
             laserCooldown = 0; // Allow laser immediately
         }
@@ -324,13 +328,13 @@ public class DragonFightManagerCustom
                  double climbRate = 4;
                  double newY = currentY;
 
-                 if (laserAttackTick < 0) { // Climbing during charge
+                if (laserAttackTick < 0) { // Climbing during charge
                      newY = Math.min(targetY, currentY + climbRate);
-                 } else { // Maintain altitude during fire
-                     if (Math.abs(currentY - targetY) > 0.5) {
+                } else { // Maintain altitude during fire
+                    if (Math.abs(currentY - targetY) > 0.5) {
                           newY = currentY + Math.signum(targetY - currentY) * climbRate * 0.5;
-                     }
-                 }
+                    }
+                }
                  double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 5;
                  double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 5;
 
