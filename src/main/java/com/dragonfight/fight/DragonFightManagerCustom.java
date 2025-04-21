@@ -323,10 +323,10 @@ public class DragonFightManagerCustom
 
             // --- Stage 1 & 2 Common: Force Position & Phase ---
             if (laserAttackTick < LASER_FIRE_DURATION) {
-                 double targetY = LASER_ATTACK_ALTITUDE;
-                 double currentY = dragonEntity.getY();
-                 double climbRate = 4;
-                 double newY = currentY;
+                double targetY = LASER_ATTACK_ALTITUDE;
+                double currentY = dragonEntity.getY();
+                double climbRate = 4;
+                double newY = currentY;
 
                 if (laserAttackTick < 0) { // Climbing during charge
                      newY = Math.min(targetY, currentY + climbRate);
@@ -335,16 +335,16 @@ public class DragonFightManagerCustom
                           newY = currentY + Math.signum(targetY - currentY) * climbRate * 0.5;
                     }
                 }
-                 double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 5;
-                 double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 5;
+                double targetX = spawnPos.getX() + (world.random.nextDouble() - 0.5) * 5;
+                double targetZ = spawnPos.getZ() + (world.random.nextDouble() - 0.5) * 5;
 
-                 dragonEntity.teleportTo(targetX, newY, targetZ);
-                 dragonEntity.setDeltaMovement(Vec3.ZERO);
-                 dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+                dragonEntity.teleportTo(targetX, newY, targetZ);
+                dragonEntity.setDeltaMovement(Vec3.ZERO);
+                dragonEntity.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
 
-                 if (laserAttackTick < 0) {
+                if (laserAttackTick < 0) {
                       laserOriginPos = dragonEntity.getEyePosition().add(dragonEntity.getViewVector(1.0f).scale(3.0));
-                 }
+                }
             }
 
             // --- Stage 1: Charging Phase Visuals & Setup ---
@@ -360,7 +360,23 @@ public class DragonFightManagerCustom
             // --- Stage 2: Firing Phase Particles & Damage ---
             else if (laserAttackTick >= 0 && laserAttackTick < LASER_FIRE_DURATION) {
                  // Lightning Signal
-                 if (world.getGameTime() % 5 == 0) { /* ... spawn visual lightning ... */ }
+                 if (world.getGameTime() % 10 == 0) {
+                    BlockPos lightningCenter = spawnPos.atY(64); // Use spawnPos X/Z, set Y to approx ground
+                     BlockPos strikePos = lightningCenter.offset(
+                         world.random.nextInt(11) - 5, // +/- 5 blocks X offset
+                         0,
+                         world.random.nextInt(11) - 5  // +/- 5 blocks Z offset
+                     );
+
+                     // Create the lightning bolt entity
+                     LightningBolt signalLightning = EntityType.LIGHTNING_BOLT.create(world);
+                     if (signalLightning != null) {
+                         signalLightning.moveTo(Vec3.atBottomCenterOf(strikePos)); // Move to target position
+                         signalLightning.setVisualOnly(true); // <<< KEY PART: Makes it visual only
+                         world.addFreshEntity(signalLightning);
+                    }
+                 }
+                 
                  // Laser Beam
                  if (laserOriginPos != null && laserTargetPos != null) {
                      Vec3 direction = laserTargetPos.subtract(laserOriginPos).normalize();
