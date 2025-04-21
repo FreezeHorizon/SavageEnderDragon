@@ -24,7 +24,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.ai.targeting.TargetingConditions;
+//import net.minecraft.world.entity.ai.targeting.TargetingConditions;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.boss.enderdragon.phases.DragonDeathPhase;
@@ -34,7 +34,7 @@ import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.npc.Npc;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
+//import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.dimension.end.EndDragonFight;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
@@ -1268,7 +1268,7 @@ public class DragonFightManagerCustom
     }
 
     private static int countActiveCrystals(Level world) {
-        if (!(world instanceof ServerLevel serverLevel)) return 0;
+        //if (!(world instanceof ServerLevel serverLevel)) return 0;
         // EndDragonFight fight = serverLevel.getDragonFight(); // Not needed just to count
 
         List<BlockPos> pillarLocations = VANILLA_PILLAR_LOCATIONS; // Use hardcoded XZ
